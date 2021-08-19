@@ -10,7 +10,7 @@ use crate::tokenize::{
 
 #[test]
 fn parses_correctly() {
-    let tokens = tokenize("16.24 + 00").unwrap();
+    let tokens = tokenize("16.2400 + 00").unwrap();
 
     let expected_tokens = vec![
         Token::Number(Decimal::from_f64(16.24).unwrap()),
@@ -24,7 +24,7 @@ fn parses_correctly() {
 
 #[test]
 fn parses_without_whitespace() {
-    let tokens = tokenize("16/0.5").unwrap();
+    let tokens = tokenize("0016/0.5").unwrap();
 
     let expected_tokens = vec![
         Token::Number(Decimal::from_f64(16.0).unwrap()),
@@ -36,7 +36,7 @@ fn parses_without_whitespace() {
 
 #[test]
 fn parses_single_number() {
-    let tokens = tokenize("0.05").unwrap();
+    let tokens = tokenize("00.050").unwrap();
 
     let expected_tokens = vec![Token::Number(Decimal::from_f64(0.05).unwrap())];
     assert_eq!(tokens, expected_tokens);
