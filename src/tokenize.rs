@@ -1,7 +1,5 @@
 use std::str::FromStr;
 
-use rust_decimal::Decimal;
-
 // ====================
 // Helper types
 // ====================
@@ -21,7 +19,7 @@ pub enum OperatorKind {
 #[derive(Debug, PartialEq)]
 pub enum Token {
     Operator(OperatorKind),
-    Number(Decimal),
+    Number(f64),
     Whitespace,
 }
 
@@ -30,20 +28,14 @@ pub enum Token {
 // ====================
 
 #[derive(Copy, Clone, PartialEq)]
-enum NumberState {
-    Integers,
-    Point,
-    Decimals,
-}
-
-#[derive(Copy, Clone, PartialEq)]
 enum State {
     Initial,
     WhitespaceBeforeOperator,
     WhitespaceAfterOperator,
     Operator(OperatorKind),
-    FirstNumber(NumberState),
-    SecondNumber(NumberState),
+    NumberIntegers,
+    NumberPoint,
+    NumberDecimals,
     End,
     Error,
 }
@@ -105,88 +97,21 @@ impl Lexer {
         self.state == State::End
     }
 
+    // Helper function
+    // Drain all of the characters in self.buffer and convert it to a number.
+    fn drain_buffer_to_decimal(&mut self) -> f64 {
+        // Drain the characrers in the buffer and convert them to a string
+        let string: String = self.buffer.drain(..).collect();
+
+        // Convert the string to a decimal
+        let number = f64::from_str(&string).unwrap();
+
+        // Return the number token
+        number
+    }
+
     // Feed a character `Some(char)` to the lexer, or feed `None` for end of string.
     pub fn feed(&mut self, c: Option<char>) -> Result<Option<Token>, LexingError> {
-        // Progressing the number state
-        match self.state {
-            State::FirstNumber(number) | State::SecondNumber(number) => {
-                // This is useful later when changing state
-                let is_second_number = if let State::SecondNumber(..) = self.state {
-                    true
-                } else {
-                    false
-                };
-
-                // Process the number state
-                match number {
-                    // Integers before the decimal
-                    // Expect: digit, period, {other characters handled later}
-                    NumberState::Integers => {
-                        // Not EOI, EOI will be handled later
-                        if let Some(c) = c {
-                            if is_digit(c) {
-                                // Push digit to the buffer, stay on the same state
-                                self.buffer.push(c);
-                                return Ok(None);
-                            }
-                            if c == '.' {
-                                // Push point to the buffer, switch to the point state
-                                self.buffer.push(c);
-
-                                if is_second_number {
-                                    self.state = State::SecondNumber(NumberState::Point);
-                                } else {
-                                    self.state = State::FirstNumber(NumberState::Point);
-                                }
-
-                                return Ok(None);
-                            }
-                        }
-                    }
-
-                    // Decimal point
-                    // Expect: digit
-                    NumberState::Point => {
-                        if let Some(c) = c {
-                            if is_digit(c) {
-                                // Push digit to the buffer, switch to the decimal numbers state
-                                self.buffer.push(c);
-
-                                if is_second_number {
-                                    self.state = State::SecondNumber(NumberState::Decimals);
-                                } else {
-                                    self.state = State::FirstNumber(NumberState::Decimals);
-                                }
-
-                                return Ok(None);
-                            }
-                        }
-
-                        // If the input is not a digit, we have an error
-                        return Err(LexingError::IncorrectNumber(
-                            NumberLexingError::ExpectedDigitAfterPoint,
-                        ));
-                    }
-
-                    // Decimal numbers
-                    // Expect: digit, {other characters handled later}
-                    NumberState::Decimals => {
-                        // Not EOI, EOI will be handled later
-                        if let Some(c) = c {
-                            if is_digit(c) {
-                                // Push digit to the buffer, stay on the same state
-                                self.buffer.push(c);
-                                return Ok(None);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Other states handled later
-            _ => {}
-        };
-
         // Process the remaining states
         match self.state {
             // If the state is end or error, return nothing
@@ -201,11 +126,13 @@ impl Lexer {
                     // Not EOI
 
                     if is_digit(c) {
-                        // Push digit to the buffer, switch to the first number state
+                        // == digit ==
+                        // Push digit to the buffer, switch to the number state, return nothing
                         self.buffer.push(c);
-                        self.state = State::FirstNumber(NumberState::Integers);
+                        self.state = State::NumberIntegers;
                         return Ok(None);
                     } else {
+                        // !! error !!
                         // Unexpected character
                         self.state = State::Error;
                         return Err(LexingError::IncorrectExpression(
@@ -213,6 +140,7 @@ impl Lexer {
                         ));
                     }
                 } else {
+                    // !! error !!
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(
@@ -221,34 +149,33 @@ impl Lexer {
                 }
             }
 
-            // First number
-            // - Expect: EOI, whitespace, operator
-            // Second number
-            // - Expect: EOI
-            // Return number token at the end
-            State::FirstNumber(..) | State::SecondNumber(..) => {
+            // Number (integers)
+            // Expect: digit, decimal point, whitespace, operator, EOI
+            State::NumberIntegers => {
                 if let Some(c) = c {
-                    // Not EOI
-
-                    // If second number, this is an error
-                    if let State::SecondNumber(..) = self.state {
-                        // Unexpected character
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::UnexpectedCharacter(c),
-                        ));
-                    }
-
-                    // Is whitespace
-                    if c == ' ' {
-                        // Switch to whitespace state
+                    if is_digit(c) {
+                        // == digit ==
+                        // Push digit to the buffer, stay on the same state, return nothing
+                        self.buffer.push(c);
+                        return Ok(None);
+                    } else if c == '.' {
+                        // == decimal point ==
+                        // Push point to the buffer, switch to the point state, return nothing
+                        self.buffer.push(c);
+                        self.state = State::NumberPoint;
+                        return Ok(None);
+                    } else if c == ' ' {
+                        // == whitespace ==
+                        // Switch to first whitespace state, return number token
                         self.state = State::WhitespaceBeforeOperator;
-                    }
-                    // Is operator
-                    else if let Some(operator_kind) = get_operator_kind(c) {
-                        // Switch to operator state
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    } else if let Some(operator_kind) = get_operator_kind(c) {
+                        // == operator ==
+                        // Switch to operator state, return number token
                         self.state = State::Operator(operator_kind);
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
                     } else {
+                        // !! error !!
                         // Unexpected character
                         self.state = State::Error;
                         return Err(LexingError::IncorrectExpression(
@@ -256,49 +183,102 @@ impl Lexer {
                         ));
                     }
                 } else {
-                    // EOI
+                    // == EOI ==
+                    // Switch to end state, return number token
                     self.state = State::End;
+                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
                 }
+            }
 
-                // Drain the characrers in the buffer and convert them to a string
-                let string: String = self.buffer.drain(..).collect();
+            // Number (point)
+            // Expect: digit
+            State::NumberPoint => {
+                if let Some(c) = c {
+                    if is_digit(c) {
+                        // == digit ==
+                        // Push digit to the buffer, switch to the decimal state
+                        self.buffer.push(c);
+                        self.state = State::NumberDecimals;
+                        return Ok(None);
+                    } else {
+                        // !! error !!
+                        // Unexpected character
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::ExpectedDigitAfterPoint,
+                        ));
+                    }
+                } else {
+                    // !! error !!
+                    // EOI not expected
+                    self.state = State::Error;
+                    return Err(LexingError::IncorrectNumber(
+                        NumberLexingError::ExpectedDigitAfterPoint,
+                    ));
+                }
+            }
 
-                // Convert the string to a decimal
-                let number = Decimal::from_str(&string).unwrap();
-
-                // Return the number token
-                return Ok(Some(Token::Number(number)));
+            // Number (decimals)
+            // Expect: digit, whitespace, operator, EOI
+            State::NumberDecimals => {
+                if let Some(c) = c {
+                    if is_digit(c) {
+                        // == digit ==
+                        // Push digit to the buffer, stay on the same state, return nothing
+                        self.buffer.push(c);
+                        return Ok(None);
+                    } else if c == ' ' {
+                        // == whitespace ==
+                        // Switch to first whitespace state, return number token
+                        self.state = State::WhitespaceBeforeOperator;
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    } else if let Some(operator_kind) = get_operator_kind(c) {
+                        // == operator ==
+                        // Switch to operator state, return number token
+                        self.state = State::Operator(operator_kind);
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    } else {
+                        // !! error !!
+                        // Unexpected character
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::UnexpectedCharacter(c),
+                        ));
+                    }
+                } else {
+                    // == EOI ==
+                    // Switch to end state, return number token
+                    self.state = State::End;
+                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                }
             }
 
             // First whitespace
-            // Expect: whitespace, operator
+            // Expect: whitespace, operator, EOI
             State::WhitespaceBeforeOperator => {
                 if let Some(c) = c {
-                    // Not EOI
-                    // Is whitespace
                     if c == ' ' {
-                        // No change in state
-                    }
-                    // Is operator
-                    else if let Some(operator_kind) = get_operator_kind(c) {
-                        // Switch to operator state
+                        // == whitespace ==
+                        // Stay on the same state, return whitespace token
+                        return Ok(Some(Token::Whitespace));
+                    } else if let Some(operator_kind) = get_operator_kind(c) {
+                        // == operator ==
+                        // Switch to operator state, return whitespace token
                         self.state = State::Operator(operator_kind);
+                        return Ok(Some(Token::Whitespace));
                     } else {
+                        // !! error !!
                         // Unexpected character
                         self.state = State::Error;
                         return Err(LexingError::IncorrectExpression(
                             ExpressionLexingError::UnexpectedCharacter(c),
                         ));
                     }
-
-                    // Return whitespace token
-                    return Ok(Some(Token::Whitespace));
                 } else {
-                    // EOI not expected
-                    self.state = State::Error;
-                    return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::UnexpectedEOI,
-                    ));
+                    // == EOI ==
+                    // Switch to end state, return whitespace token
+                    self.state = State::End;
+                    return Ok(Some(Token::Whitespace));
                 }
             }
 
@@ -306,25 +286,27 @@ impl Lexer {
             // Expect: whitespace, digit
             State::Operator(operator_kind) => {
                 if let Some(c) = c {
-                    // Not EOI
                     if c == ' ' {
-                        // Switch to whitespace state
+                        // == whitespace ==
+                        // Switch to second whitespace state, return operator token
                         self.state = State::WhitespaceAfterOperator;
-                    }
-                    // Is digit
-                    else if is_digit(c) {
-                        // Switch to digit state, push digit to buffer
+                        return Ok(Some(Token::Operator(operator_kind)));
+                    } else if is_digit(c) {
+                        // == digit ==
+                        // Switch to number state, return operator token
+                        self.state = State::NumberIntegers;
                         self.buffer.push(c);
-                        self.state = State::SecondNumber(NumberState::Integers);
+                        return Ok(Some(Token::Operator(operator_kind)));
                     } else {
+                        // !! error !!
                         // Unexpected character
                         self.state = State::Error;
                         return Err(LexingError::IncorrectExpression(
                             ExpressionLexingError::UnexpectedCharacter(c),
                         ));
                     }
-                    return Ok(Some(Token::Operator(operator_kind)));
                 } else {
+                    // !! error !!
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(
@@ -337,25 +319,26 @@ impl Lexer {
             // Expect: whitespace, digit
             State::WhitespaceAfterOperator => {
                 if let Some(c) = c {
-                    // Not EOI
-                    // Is whitespace
                     if c == ' ' {
-                        // No change in state
-                    }
-                    // Is digit
-                    else if is_digit(c) {
-                        // Switch to digit state, push digit to buffer
+                        // == whitespace ==
+                        // Stay on the same state, return whitespace token
+                        return Ok(Some(Token::Whitespace));
+                    } else if is_digit(c) {
+                        // == digit ==
+                        // Push digit to buffer, switch to number state, return whitespace token
                         self.buffer.push(c);
-                        self.state = State::SecondNumber(NumberState::Integers);
+                        self.state = State::NumberIntegers;
+                        return Ok(Some(Token::Whitespace));
                     } else {
+                        // !! error !!
                         // Unexpected character
                         self.state = State::Error;
                         return Err(LexingError::IncorrectExpression(
                             ExpressionLexingError::UnexpectedCharacter(c),
                         ));
                     }
-                    return Ok(Some(Token::Whitespace));
                 } else {
+                    // !! error !!
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(

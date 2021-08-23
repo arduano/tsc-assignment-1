@@ -1,5 +1,3 @@
-use rust_decimal::{prelude::FromPrimitive, Decimal};
-
 use crate::tokenize::{
     tokenize, ExpressionLexingError, LexingError, NumberLexingError, OperatorKind, Token,
 };
@@ -10,14 +8,20 @@ use crate::tokenize::{
 
 #[test]
 fn parses_correctly() {
-    let tokens = tokenize("16.2400 + 00").unwrap();
+    let tokens = tokenize("16.2400 + 00-2.1 / 5").unwrap();
 
     let expected_tokens = vec![
-        Token::Number(Decimal::from_f64(16.24).unwrap()),
+        Token::Number(16.24),
         Token::Whitespace,
         Token::Operator(OperatorKind::Plus),
         Token::Whitespace,
-        Token::Number(Decimal::from_f64(0.0).unwrap()),
+        Token::Number(0.0),
+        Token::Operator(OperatorKind::Subtract),
+        Token::Number(2.1),
+        Token::Whitespace,
+        Token::Operator(OperatorKind::Divide),
+        Token::Whitespace,
+        Token::Number(5.0),
     ];
     assert_eq!(tokens, expected_tokens);
 }
@@ -27,9 +31,9 @@ fn parses_without_whitespace() {
     let tokens = tokenize("0016/0.5").unwrap();
 
     let expected_tokens = vec![
-        Token::Number(Decimal::from_f64(16.0).unwrap()),
+        Token::Number(16.0),
         Token::Operator(OperatorKind::Divide),
-        Token::Number(Decimal::from_f64(0.5).unwrap()),
+        Token::Number(0.5),
     ];
     assert_eq!(tokens, expected_tokens);
 }
@@ -38,37 +42,29 @@ fn parses_without_whitespace() {
 fn parses_single_number() {
     let tokens = tokenize("00.050").unwrap();
 
-    let expected_tokens = vec![Token::Number(Decimal::from_f64(0.05).unwrap())];
+    let expected_tokens = vec![Token::Number(0.05)];
     assert_eq!(tokens, expected_tokens);
 }
 
 #[test]
 fn parses_irregular_whitespaces_1() {
-    let tokens = tokenize("3463    *2").unwrap();
+    let tokens = tokenize("3463    *2/3463.0-   2.0").unwrap();
 
     let expected_tokens = vec![
-        Token::Number(Decimal::from_f64(3463.0).unwrap()),
+        Token::Number(3463.0),
         Token::Whitespace,
         Token::Whitespace,
         Token::Whitespace,
         Token::Whitespace,
         Token::Operator(OperatorKind::Multiply),
-        Token::Number(Decimal::from_f64(2.0).unwrap()),
-    ];
-    assert_eq!(tokens, expected_tokens);
-}
-
-#[test]
-fn parses_irregular_whitespaces_2() {
-    let tokens = tokenize("3463.0-   2.0").unwrap();
-
-    let expected_tokens = vec![
-        Token::Number(Decimal::from_f64(3463.0).unwrap()),
+        Token::Number(2.0),
+        Token::Operator(OperatorKind::Divide),
+        Token::Number(3463.0),
         Token::Operator(OperatorKind::Subtract),
         Token::Whitespace,
         Token::Whitespace,
         Token::Whitespace,
-        Token::Number(Decimal::from_f64(2.0).unwrap()),
+        Token::Number(2.0),
     ];
     assert_eq!(tokens, expected_tokens);
 }
@@ -93,7 +89,7 @@ fn errors_on_missing_decimals() {
 
 #[test]
 fn errors_on_eoi() {
-    let tests = vec!["43.0   ", "43  ", "43 +  "];
+    let tests = vec!["43.0   /", "43 + 43- ", "43 +  "];
 
     for test in tests {
         let err = tokenize(test).err();
@@ -110,7 +106,7 @@ fn errors_on_unexpected_char() {
         ("43.0   dfgd ", 'd'),
         ("43  f  ", 'f'),
         ("43 + + 82", '+'),
-        ("43 - 43 ", ' '),
+        ("43 - 3 - 43 .", '.'),
         ("76.5.344 ", '.'),
     ];
 
