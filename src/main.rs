@@ -1,7 +1,7 @@
 mod tokenize;
 
 #[cfg(test)]
-mod tests;
+mod ported_tests;
 
 #[allow(unused_must_use)]
 fn main() {

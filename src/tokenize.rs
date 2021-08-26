@@ -7,7 +7,7 @@ use std::str::FromStr;
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum OperatorKind {
     Subtract,
-    Plus,
+    Add,
     Divide,
     Multiply,
 }
@@ -20,11 +20,10 @@ pub enum OperatorKind {
 pub enum Token {
     Operator(OperatorKind),
     Number(f64),
-    Whitespace,
 }
 
 // ====================
-// State enums
+// State enum
 // ====================
 
 #[derive(Copy, Clone, PartialEq)]
@@ -33,6 +32,7 @@ enum State {
     WhitespaceBeforeOperator,
     WhitespaceAfterOperator,
     Operator(OperatorKind),
+    NumberZeroInteger,
     NumberIntegers,
     NumberPoint,
     NumberDecimals,
@@ -47,12 +47,15 @@ enum State {
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum NumberLexingError {
     ExpectedDigitAfterPoint,
+    NonZeroIntegerBeforePoint,
+    MissingIntegerBeforePoint,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum ExpressionLexingError {
     UnexpectedCharacter(char),
-    UnexpectedEOI,
+    ExpectedNumber,
+    ExpectedOperator,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -77,7 +80,7 @@ fn is_digit(c: char) -> bool {
 fn get_operator_kind(c: char) -> Option<OperatorKind> {
     match c {
         '-' => Some(OperatorKind::Subtract),
-        '+' => Some(OperatorKind::Plus),
+        '+' => Some(OperatorKind::Add),
         '/' => Some(OperatorKind::Divide),
         '*' => Some(OperatorKind::Multiply),
         _ => None,
@@ -120,17 +123,40 @@ impl Lexer {
             }
 
             // Initial state
-            // Expect: digit
+            // Expect: digit, zero digit, whitespace
             State::Initial => {
                 if let Some(c) = c {
                     // Not EOI
 
                     if is_digit(c) {
                         // == digit ==
-                        // Push digit to the buffer, switch to the number state, return nothing
+                        // Push digit to the buffer, switch to the number (or zero number) state, return nothing
                         self.buffer.push(c);
-                        self.state = State::NumberIntegers;
+                        if c == '0' {
+                            self.state = State::NumberZeroInteger;
+                        } else {
+                            self.state = State::NumberIntegers;
+                        }
                         return Ok(None);
+                    } else if c == ' ' {
+                        // == whitespace ==
+                        // Switch to whitespace after operator state, return nothing
+                        self.state = State::WhitespaceAfterOperator;
+                        return Ok(None);
+                    } else if let Some(_) = get_operator_kind(c) {
+                        // !! error !!
+                        // Unexpected operator
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::ExpectedNumber,
+                        ));
+                    } else if c == '.' {
+                        // !! error !!
+                        // Zero required before point
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::MissingIntegerBeforePoint,
+                        ));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -144,13 +170,55 @@ impl Lexer {
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::UnexpectedEOI,
+                        ExpressionLexingError::ExpectedNumber,
                     ));
                 }
             }
 
+            // Number (zero)
+            // Expect: digit, point, whitespace, operator, EOI
+            State::NumberZeroInteger => {
+                if let Some(c) = c {
+                    if is_digit(c) {
+                        // == digit ==
+                        // Push digit to the buffer, switch to integers state, return nothing
+                        self.buffer.push(c);
+                        self.state = State::NumberIntegers;
+                        return Ok(None);
+                    } else if c == '.' {
+                        // == decimal point ==
+                        // Push point to the buffer, switch to the point state, return nothing
+                        self.buffer.push(c);
+                        self.state = State::NumberPoint;
+                        return Ok(None);
+                    } else if c == ' ' {
+                        // == whitespace ==
+                        // Switch to first whitespace state, return number token
+                        self.state = State::WhitespaceBeforeOperator;
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    } else if let Some(operator_kind) = get_operator_kind(c) {
+                        // == operator ==
+                        // Switch to operator state, return number token
+                        self.state = State::Operator(operator_kind);
+                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    } else {
+                        // !! error !!
+                        // Unexpected character
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::UnexpectedCharacter(c),
+                        ));
+                    }
+                } else {
+                    // == EOI ==
+                    // Switch to end state, return number token
+                    self.state = State::End;
+                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                }
+            }
+
             // Number (integers)
-            // Expect: digit, decimal point, whitespace, operator, EOI
+            // Expect: digit, whitespace, operator, EOI
             State::NumberIntegers => {
                 if let Some(c) = c {
                     if is_digit(c) {
@@ -159,11 +227,12 @@ impl Lexer {
                         self.buffer.push(c);
                         return Ok(None);
                     } else if c == '.' {
-                        // == decimal point ==
-                        // Push point to the buffer, switch to the point state, return nothing
-                        self.buffer.push(c);
-                        self.state = State::NumberPoint;
-                        return Ok(None);
+                        // !! error !!
+                        // Point expected only after zero integer
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::NonZeroIntegerBeforePoint,
+                        ));
                     } else if c == ' ' {
                         // == whitespace ==
                         // Switch to first whitespace state, return number token
@@ -259,13 +328,20 @@ impl Lexer {
                 if let Some(c) = c {
                     if c == ' ' {
                         // == whitespace ==
-                        // Stay on the same state, return whitespace token
-                        return Ok(Some(Token::Whitespace));
+                        // Stay on the same state, return nothing
+                        return Ok(None);
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
-                        // Switch to operator state, return whitespace token
+                        // Switch to operator state, return nothing
                         self.state = State::Operator(operator_kind);
-                        return Ok(Some(Token::Whitespace));
+                        return Ok(None);
+                    } else if is_digit(c) {
+                        // !! error !!
+                        // Unexpected number
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::ExpectedOperator,
+                        ));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -276,9 +352,9 @@ impl Lexer {
                     }
                 } else {
                     // == EOI ==
-                    // Switch to end state, return whitespace token
+                    // Switch to end state, return nothing
                     self.state = State::End;
-                    return Ok(Some(Token::Whitespace));
+                    return Ok(None);
                 }
             }
 
@@ -293,10 +369,28 @@ impl Lexer {
                         return Ok(Some(Token::Operator(operator_kind)));
                     } else if is_digit(c) {
                         // == digit ==
-                        // Switch to number state, return operator token
-                        self.state = State::NumberIntegers;
+                        // Push digit to buffer, switch to number (or zero number) state, return operator token
                         self.buffer.push(c);
+                        if c == '0' {
+                            self.state = State::NumberZeroInteger;
+                        } else {
+                            self.state = State::NumberIntegers;
+                        }
                         return Ok(Some(Token::Operator(operator_kind)));
+                    } else if let Some(_) = get_operator_kind(c) {
+                        // !! error !!
+                        // Unexpected operator
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::ExpectedNumber,
+                        ));
+                    } else if c == '.' {
+                        // !! error !!
+                        // Zero required before point
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::MissingIntegerBeforePoint,
+                        ));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -310,7 +404,7 @@ impl Lexer {
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::UnexpectedEOI,
+                        ExpressionLexingError::ExpectedNumber,
                     ));
                 }
             }
@@ -321,14 +415,32 @@ impl Lexer {
                 if let Some(c) = c {
                     if c == ' ' {
                         // == whitespace ==
-                        // Stay on the same state, return whitespace token
-                        return Ok(Some(Token::Whitespace));
+                        // Stay on the same state, return nothing
+                        return Ok(None);
                     } else if is_digit(c) {
                         // == digit ==
-                        // Push digit to buffer, switch to number state, return whitespace token
+                        // Push digit to buffer, switch to number (or zero number) state, return nothing
                         self.buffer.push(c);
-                        self.state = State::NumberIntegers;
-                        return Ok(Some(Token::Whitespace));
+                        if c == '0' {
+                            self.state = State::NumberZeroInteger;
+                        } else {
+                            self.state = State::NumberIntegers;
+                        }
+                        return Ok(None);
+                    } else if c == '.' {
+                        // !! error !!
+                        // Zero required before point
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::MissingIntegerBeforePoint,
+                        ));
+                    } else if let Some(_) = get_operator_kind(c) {
+                        // !! error !!
+                        // Unexpected operator
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectExpression(
+                            ExpressionLexingError::ExpectedNumber,
+                        ));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -342,7 +454,7 @@ impl Lexer {
                     // EOI not expected
                     self.state = State::Error;
                     return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::UnexpectedEOI,
+                        ExpressionLexingError::ExpectedNumber,
                     ));
                 }
             }
