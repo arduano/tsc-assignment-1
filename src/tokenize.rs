@@ -49,6 +49,7 @@ pub enum NumberLexingError {
     ExpectedDigitAfterPoint,
     NonZeroIntegerBeforePoint,
     MissingIntegerBeforePoint,
+    ExpectedPointAfterZero,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -176,15 +177,16 @@ impl Lexer {
             }
 
             // Number (zero)
-            // Expect: digit, point, whitespace, operator, EOI
+            // Expect: point, whitespace, operator, EOI
             State::NumberZeroInteger => {
                 if let Some(c) = c {
                     if is_digit(c) {
-                        // == digit ==
-                        // Push digit to the buffer, switch to integers state, return nothing
-                        self.buffer.push(c);
-                        self.state = State::NumberIntegers;
-                        return Ok(None);
+                        // !! error !!
+                        // Expected a decimal point after first zero
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::ExpectedPointAfterZero,
+                        ));
                     } else if c == '.' {
                         // == decimal point ==
                         // Push point to the buffer, switch to the point state, return nothing

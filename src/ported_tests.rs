@@ -278,6 +278,24 @@ fn test_decimal_without_integer_part() {
 }
 
 #[test]
+fn test_integer_starting_with_zero() {
+    repeat(|| {
+        let invalid_number = format!("0{}", random_integer_string(None));
+        let string = random_valid_token_sequence_with_replaced_number(invalid_number);
+
+        let output = tokenize(&string);
+
+        assert_eq_with_input(
+            &string,
+            &output,
+            &Err(LexingError::IncorrectNumber(
+                NumberLexingError::ExpectedPointAfterZero,
+            )),
+        );
+    })
+}
+
+#[test]
 fn test_decimal_without_decimal_part() {
     repeat(|| {
         let invalid_number = "0.".to_string();
