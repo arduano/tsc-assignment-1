@@ -30,12 +30,9 @@ pub enum Token {
 enum State {
     Initial,
     WhitespaceBeforeOperator,
-    WhitespaceAfterOperator,
-    Operator(OperatorKind),
     NumberZeroInteger,
-    NumberIntegers,
     NumberPoint,
-    NumberDecimals,
+    Number,
     End,
     Error,
 }
@@ -115,7 +112,7 @@ impl Lexer {
     }
 
     // Feed a character `Some(char)` to the lexer, or feed `None` for end of string.
-    pub fn feed(&mut self, c: Option<char>) -> Result<Option<Token>, LexingError> {
+    pub fn feed(&mut self, c: Option<char>) -> Result<Option<Vec<Token>>, LexingError> {
         // Process the remaining states
         match self.state {
             // If the state is end or error, return nothing
@@ -136,13 +133,12 @@ impl Lexer {
                         if c == '0' {
                             self.state = State::NumberZeroInteger;
                         } else {
-                            self.state = State::NumberIntegers;
+                            self.state = State::Number;
                         }
                         return Ok(None);
                     } else if c == ' ' {
                         // == whitespace ==
-                        // Switch to whitespace after operator state, return nothing
-                        self.state = State::WhitespaceAfterOperator;
+                        // Stay on the same state, return nothing
                         return Ok(None);
                     } else if let Some(_) = get_operator_kind(c) {
                         // !! error !!
@@ -197,12 +193,15 @@ impl Lexer {
                         // == whitespace ==
                         // Switch to first whitespace state, return number token
                         self.state = State::WhitespaceBeforeOperator;
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                        return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
-                        // Switch to operator state, return number token
-                        self.state = State::Operator(operator_kind);
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                        // Switch to operator (initial) state, return number token and operator token
+                        self.state = State::Initial;
+                        return Ok(Some(vec![
+                            Token::Number(self.drain_buffer_to_decimal()),
+                            Token::Operator(operator_kind),
+                        ]));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -215,49 +214,7 @@ impl Lexer {
                     // == EOI ==
                     // Switch to end state, return number token
                     self.state = State::End;
-                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
-                }
-            }
-
-            // Number (integers)
-            // Expect: digit, whitespace, operator, EOI
-            State::NumberIntegers => {
-                if let Some(c) = c {
-                    if is_digit(c) {
-                        // == digit ==
-                        // Push digit to the buffer, stay on the same state, return nothing
-                        self.buffer.push(c);
-                        return Ok(None);
-                    } else if c == '.' {
-                        // !! error !!
-                        // Point expected only after zero integer
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectNumber(
-                            NumberLexingError::NonZeroIntegerBeforePoint,
-                        ));
-                    } else if c == ' ' {
-                        // == whitespace ==
-                        // Switch to first whitespace state, return number token
-                        self.state = State::WhitespaceBeforeOperator;
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
-                    } else if let Some(operator_kind) = get_operator_kind(c) {
-                        // == operator ==
-                        // Switch to operator state, return number token
-                        self.state = State::Operator(operator_kind);
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
-                    } else {
-                        // !! error !!
-                        // Unexpected character
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::UnexpectedCharacter(c),
-                        ));
-                    }
-                } else {
-                    // == EOI ==
-                    // Switch to end state, return number token
-                    self.state = State::End;
-                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
                 }
             }
 
@@ -269,7 +226,7 @@ impl Lexer {
                         // == digit ==
                         // Push digit to the buffer, switch to the decimal state
                         self.buffer.push(c);
-                        self.state = State::NumberDecimals;
+                        self.state = State::Number;
                         return Ok(None);
                     } else {
                         // !! error !!
@@ -291,7 +248,7 @@ impl Lexer {
 
             // Number (decimals)
             // Expect: digit, whitespace, operator, EOI
-            State::NumberDecimals => {
+            State::Number => {
                 if let Some(c) = c {
                     if is_digit(c) {
                         // == digit ==
@@ -302,12 +259,22 @@ impl Lexer {
                         // == whitespace ==
                         // Switch to first whitespace state, return number token
                         self.state = State::WhitespaceBeforeOperator;
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                        return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
-                        // Switch to operator state, return number token
-                        self.state = State::Operator(operator_kind);
-                        return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                        // Switch to operator state, return number token and operator token
+                        self.state = State::Initial;
+                        return Ok(Some(vec![
+                            Token::Number(self.drain_buffer_to_decimal()),
+                            Token::Operator(operator_kind),
+                        ]));
+                    } else if c == '.' {
+                        // !! error !!
+                        // Unexpected decimal point
+                        self.state = State::Error;
+                        return Err(LexingError::IncorrectNumber(
+                            NumberLexingError::NonZeroIntegerBeforePoint,
+                        ));
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -320,7 +287,7 @@ impl Lexer {
                     // == EOI ==
                     // Switch to end state, return number token
                     self.state = State::End;
-                    return Ok(Some(Token::Number(self.drain_buffer_to_decimal())));
+                    return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
                 }
             }
 
@@ -335,8 +302,8 @@ impl Lexer {
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
                         // Switch to operator state, return nothing
-                        self.state = State::Operator(operator_kind);
-                        return Ok(None);
+                        self.state = State::Initial;
+                        return Ok(Some(vec![Token::Operator(operator_kind)]));
                     } else if is_digit(c) {
                         // !! error !!
                         // Unexpected number
@@ -359,107 +326,6 @@ impl Lexer {
                     return Ok(None);
                 }
             }
-
-            // Operator
-            // Expect: whitespace, digit
-            State::Operator(operator_kind) => {
-                if let Some(c) = c {
-                    if c == ' ' {
-                        // == whitespace ==
-                        // Switch to second whitespace state, return operator token
-                        self.state = State::WhitespaceAfterOperator;
-                        return Ok(Some(Token::Operator(operator_kind)));
-                    } else if is_digit(c) {
-                        // == digit ==
-                        // Push digit to buffer, switch to number (or zero number) state, return operator token
-                        self.buffer.push(c);
-                        if c == '0' {
-                            self.state = State::NumberZeroInteger;
-                        } else {
-                            self.state = State::NumberIntegers;
-                        }
-                        return Ok(Some(Token::Operator(operator_kind)));
-                    } else if let Some(_) = get_operator_kind(c) {
-                        // !! error !!
-                        // Unexpected operator
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::ExpectedNumber,
-                        ));
-                    } else if c == '.' {
-                        // !! error !!
-                        // Zero required before point
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectNumber(
-                            NumberLexingError::MissingIntegerBeforePoint,
-                        ));
-                    } else {
-                        // !! error !!
-                        // Unexpected character
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::UnexpectedCharacter(c),
-                        ));
-                    }
-                } else {
-                    // !! error !!
-                    // EOI not expected
-                    self.state = State::Error;
-                    return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::ExpectedNumber,
-                    ));
-                }
-            }
-
-            // Second whitespace
-            // Expect: whitespace, digit
-            State::WhitespaceAfterOperator => {
-                if let Some(c) = c {
-                    if c == ' ' {
-                        // == whitespace ==
-                        // Stay on the same state, return nothing
-                        return Ok(None);
-                    } else if is_digit(c) {
-                        // == digit ==
-                        // Push digit to buffer, switch to number (or zero number) state, return nothing
-                        self.buffer.push(c);
-                        if c == '0' {
-                            self.state = State::NumberZeroInteger;
-                        } else {
-                            self.state = State::NumberIntegers;
-                        }
-                        return Ok(None);
-                    } else if c == '.' {
-                        // !! error !!
-                        // Zero required before point
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectNumber(
-                            NumberLexingError::MissingIntegerBeforePoint,
-                        ));
-                    } else if let Some(_) = get_operator_kind(c) {
-                        // !! error !!
-                        // Unexpected operator
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::ExpectedNumber,
-                        ));
-                    } else {
-                        // !! error !!
-                        // Unexpected character
-                        self.state = State::Error;
-                        return Err(LexingError::IncorrectExpression(
-                            ExpressionLexingError::UnexpectedCharacter(c),
-                        ));
-                    }
-                } else {
-                    // !! error !!
-                    // EOI not expected
-                    self.state = State::Error;
-                    return Err(LexingError::IncorrectExpression(
-                        ExpressionLexingError::ExpectedNumber,
-                    ));
-                }
-            }
         }
     }
 }
@@ -476,15 +342,15 @@ pub fn tokenize(string: &str) -> Result<Vec<Token>, LexingError> {
     for c in string.chars().into_iter() {
         let result = lexer.feed(Some(c))?;
         // If a token was emitted, add it to the list
-        if let Some(token) = result {
-            tokens.push(token);
+        if let Some(mut token) = result {
+            tokens.append(&mut token);
         }
     }
 
     // Feed EOI
     let result = lexer.feed(None)?;
-    if let Some(token) = result {
-        tokens.push(token);
+    if let Some(mut token) = result {
+        tokens.append(&mut token);
     }
 
     // Just in case, make sure the lexer is ended
