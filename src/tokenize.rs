@@ -112,12 +112,12 @@ impl Lexer {
     }
 
     // Feed a character `Some(char)` to the lexer, or feed `None` for end of string.
-    pub fn feed(&mut self, c: Option<char>) -> Result<Option<Vec<Token>>, LexingError> {
+    pub fn feed(&mut self, c: Option<char>) -> Result<Vec<Token>, LexingError> {
         // Process the remaining states
         match self.state {
             // If the state is end or error, return nothing
             State::End | State::Error => {
-                return Ok(None);
+                return Ok(vec![]);
             }
 
             // Initial state
@@ -135,11 +135,11 @@ impl Lexer {
                         } else {
                             self.state = State::Number;
                         }
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else if c == ' ' {
                         // == whitespace ==
                         // Stay on the same state, return nothing
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else if let Some(_) = get_operator_kind(c) {
                         // !! error !!
                         // Unexpected operator
@@ -188,20 +188,20 @@ impl Lexer {
                         // Push point to the buffer, switch to the point state, return nothing
                         self.buffer.push(c);
                         self.state = State::NumberPoint;
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else if c == ' ' {
                         // == whitespace ==
                         // Switch to first whitespace state, return number token
                         self.state = State::WhitespaceBeforeOperator;
-                        return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
+                        return Ok(vec![Token::Number(self.drain_buffer_to_decimal())]);
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
                         // Switch to operator (initial) state, return number token and operator token
                         self.state = State::Initial;
-                        return Ok(Some(vec![
+                        return Ok(vec![
                             Token::Number(self.drain_buffer_to_decimal()),
                             Token::Operator(operator_kind),
-                        ]));
+                        ]);
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -214,7 +214,7 @@ impl Lexer {
                     // == EOI ==
                     // Switch to end state, return number token
                     self.state = State::End;
-                    return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
+                    return Ok(vec![Token::Number(self.drain_buffer_to_decimal())]);
                 }
             }
 
@@ -227,7 +227,7 @@ impl Lexer {
                         // Push digit to the buffer, switch to the decimal state
                         self.buffer.push(c);
                         self.state = State::Number;
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else {
                         // !! error !!
                         // Unexpected character
@@ -254,20 +254,20 @@ impl Lexer {
                         // == digit ==
                         // Push digit to the buffer, stay on the same state, return nothing
                         self.buffer.push(c);
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else if c == ' ' {
                         // == whitespace ==
                         // Switch to first whitespace state, return number token
                         self.state = State::WhitespaceBeforeOperator;
-                        return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
+                        return Ok(vec![Token::Number(self.drain_buffer_to_decimal())]);
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
                         // Switch to operator state, return number token and operator token
                         self.state = State::Initial;
-                        return Ok(Some(vec![
+                        return Ok(vec![
                             Token::Number(self.drain_buffer_to_decimal()),
                             Token::Operator(operator_kind),
-                        ]));
+                        ]);
                     } else if c == '.' {
                         // !! error !!
                         // Unexpected decimal point
@@ -287,7 +287,7 @@ impl Lexer {
                     // == EOI ==
                     // Switch to end state, return number token
                     self.state = State::End;
-                    return Ok(Some(vec![Token::Number(self.drain_buffer_to_decimal())]));
+                    return Ok(vec![Token::Number(self.drain_buffer_to_decimal())]);
                 }
             }
 
@@ -298,12 +298,12 @@ impl Lexer {
                     if c == ' ' {
                         // == whitespace ==
                         // Stay on the same state, return nothing
-                        return Ok(None);
+                        return Ok(vec![]);
                     } else if let Some(operator_kind) = get_operator_kind(c) {
                         // == operator ==
                         // Switch to operator state, return nothing
                         self.state = State::Initial;
-                        return Ok(Some(vec![Token::Operator(operator_kind)]));
+                        return Ok(vec![Token::Operator(operator_kind)]);
                     } else if is_digit(c) {
                         // !! error !!
                         // Unexpected number
@@ -323,7 +323,7 @@ impl Lexer {
                     // == EOI ==
                     // Switch to end state, return nothing
                     self.state = State::End;
-                    return Ok(None);
+                    return Ok(vec![]);
                 }
             }
         }
@@ -340,18 +340,14 @@ pub fn tokenize(string: &str) -> Result<Vec<Token>, LexingError> {
 
     // Feed characters, one at a time
     for c in string.chars().into_iter() {
-        let result = lexer.feed(Some(c))?;
+        let mut result = lexer.feed(Some(c))?;
         // If a token was emitted, add it to the list
-        if let Some(mut token) = result {
-            tokens.append(&mut token);
-        }
+        tokens.append(&mut result);
     }
 
     // Feed EOI
-    let result = lexer.feed(None)?;
-    if let Some(mut token) = result {
-        tokens.append(&mut token);
-    }
+    let mut result = lexer.feed(None)?;
+    tokens.append(&mut result);
 
     // Just in case, make sure the lexer is ended
     assert_eq!(lexer.is_ended(), true);
